@@ -1,0 +1,9 @@
+pytest==6.2.2
+pytest-benchmark==3.2.3
+pytest-timeout==1.4.2
+
+flake8>=3.8.3
+yapf>=0.30.0
+isort>=5.7.0
+
+jupyter==1.0.0
