@@ -5,7 +5,7 @@ import pytest
 import numpy as np
 
 from .marshal import marshal_to_str, unmarshal_from_str
-from .marshal import marshal_obj, unmarshal_obj
+from .marshal import marshal_obj
 from .marshal import marshal, unmarshal
 from .marshal import VERSION, encode_version
 
@@ -19,6 +19,7 @@ TEST_ROUNDTRIP = {
 	"bytes": b"\0\5\10text\rs",
 
 	"collections": [1, 2, {'a': 5, 'b': [1, math.inf, 3]}],
+	"set": set([1, 5, 8]),
 }
 
 

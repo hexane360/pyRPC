@@ -1,7 +1,8 @@
 
 from io import BytesIO, StringIO
 import json
-from typing import Sequence, Mapping, Iterator, Dict, Union, Tuple, Any
+from typing import Sequence, Mapping, Set, Iterator, Union
+from typing import Dict, Tuple, Any
 import numpy as np
 import base64
 
@@ -83,6 +84,7 @@ def marshal_obj(obj: Any) -> JsonType:
 	The following composite types are supported:
 	    - list (and types with a `__iter__()` method)
 	    - tuple
+	    - set (and types with a `.to_set()` method)
 	    - dict (and types with a `.to_dict()` method. Keys must be scalar values)
 
 	Subtypes of the above are supported, but they are usually unmarshalled as their parent type.
@@ -118,6 +120,12 @@ def marshal_obj(obj: Any) -> JsonType:
 		inner = dict(map_values(marshal_obj, obj))
 		return wrapped('dict', inner)
 
+	if isinstance(obj, Set) or hasattr(obj, 'to_set'):
+		if hasattr(obj, 'to_set'):
+			obj = obj.to_set()
+		inner = list(map(marshal_obj, obj))
+		return wrapped('set', inner)
+
 	# __iter__ is marshalled as list as well
 	if isinstance(obj, Sequence) or hasattr(obj, '__iter__'):
 		# marshal inside values
@@ -133,8 +141,11 @@ def marshal_obj(obj: Any) -> JsonType:
 UNMARSHAL_MAP = {
 	# just unmarshal inner dictionary
 	'dict': lambda obj: dict(map_values(unmarshal_obj, obj['data'])),
-	# unmarshal a list as a tuple
+	# re-interpret a list as a tuple
 	'tuple': lambda obj: tuple(map(unmarshal_obj, obj['data'])),
+	# re-interpret a list as a set
+	'set': lambda obj: set(map(unmarshal_obj, obj['data'])),
+	# ndarray unmarshal is done specially
 	'ndarray': unmarshal_ndarray,
 	# unmarshal complex from [real, imag]
 	'complex': lambda obj: complex(*obj['data']),
@@ -182,6 +193,7 @@ def marshal(obj: Any) -> JsonType:
 	The following collection types are supported:
 	    - list (and types with a `__iter__()` method)
 	    - tuple
+	    - set
 	    - dict (and types with a `.to_dict()` method. Keys must be scalar values)
 
 	Subtypes of the above are supported, but they are usually unmarshalled as their parent type.
