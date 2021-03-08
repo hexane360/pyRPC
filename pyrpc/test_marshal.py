@@ -7,7 +7,7 @@ import numpy as np
 from .marshal import marshal_to_str, unmarshal_from_str
 from .marshal import marshal_obj
 from .marshal import marshal, unmarshal
-from .marshal import VERSION, encode_version
+from .marshal import MARSHAL_VERSION_STR
 
 
 TEST_ROUNDTRIP = {
@@ -17,6 +17,7 @@ TEST_ROUNDTRIP = {
 	"complex": complex(1., -1.),
 	"str": "Test ⊗ String\0",
 	"bytes": b"\0\5\10text\rs",
+	"none": None,
 
 	"collections": [1, 2, {'a': 5, 'b': [1, math.inf, 3]}],
 	"set": set([1, 5, 8]),
@@ -71,7 +72,7 @@ def test_marshal(name, obj, expected):
 
 def test_version_marshal():
 	assert marshal(5) == {
-		'v': encode_version(VERSION),
+		'v': MARSHAL_VERSION_STR,
 		'data': 5,
 	}
 
@@ -92,4 +93,4 @@ def test_version_unmarshal():
 			'data': 5
 		})
 
-	assert unmarshal({'v': encode_version(VERSION), 'data': 5}) == 5
+	assert unmarshal({'v': MARSHAL_VERSION_STR, 'data': 5}) == 5

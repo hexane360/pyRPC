@@ -6,6 +6,8 @@ import inspect
 import logging
 import sys
 import traceback
+import json
+from io import BytesIO
 from typing import List, Sequence, Optional, Awaitable, Union
 
 #from tornado import escape, gen
@@ -14,8 +16,14 @@ from tornado.web import RequestHandler, Application, Finish, HTTPError
 from tornado import escape
 from tornado.httputil import responses
 
+from .util import encode_version, decode_version
+from .marshal import marshal_to_str, unmarshal_from_str
 
-VERSION = 0.1
+
+PROTOCOL_VERSION = (0, 1)
+PROTOCOL_VERSION_STR = encode_version(PROTOCOL_VERSION)
+
+SERVER_AGENT = f"PyRPC/{PROTOCOL_VERSION_STR}"
 
 
 class RPCError(HTTPError):
@@ -68,6 +76,11 @@ class RPCServer:
 		self.server.listen(port, address)
 
 
+def encode_value(obj) -> bytes:
+	output = BytesIO()
+	json.dump(obj, output, ensure_ascii=False)
+
+
 class RPCHandler(RequestHandler):
 	"""
 	Class which handles an RPC request.
@@ -76,17 +89,23 @@ class RPCHandler(RequestHandler):
 	def initialize(self, root):
 		self.root = root
 
+	def write_obj(self, obj):
+		s = marshal_to_str(obj)
+		self.write(s.encode('utf-8'))
+
 	def get(self):
-		return self.get_endpoint(self.request.path)
+		logging.debug(f"GET {self.request.path}")
+		self.write_obj(self.get_endpoint(self.request.path))
+		return self.finish()
 
 	def post(self):
-		logging.debug(f"POST body: {self.request.body}")
+		logging.debug(f"POST {self.request.path}\nbody:\n{self.request.body}")
 
 		if self.request.headers.get('Content-Type', 'application/x-json') != 'application/x-json':
 			raise RPCError(415, "Expected application/x-json")
 
 		try:
-			body = escape.json_decode(self.request.body)
+			body = unmarshal_from_str(self.request.body.decode('utf-8'))
 		except Exception as e:
 			raise RPCError(400, f"Invalid JSON body: {e.msg}")
 
@@ -100,7 +119,8 @@ class RPCHandler(RequestHandler):
 			args = [body]
 			kwargs = {}
 
-		return self.call_endpoint(self.request.path, *args, **kwargs)
+		self.write_obj(self.call_endpoint(self.request.path, *args, **kwargs))
+		return self.finish()
 
 	def get_endpoint(self, endpoint: str):
 		components = endpoint.lstrip('/').split('/')
@@ -116,7 +136,7 @@ class RPCHandler(RequestHandler):
 				except TypeError:
 					raise not_found_error('/'.join(components[:i+1]))
 			try:
-				obj = getattr(self, component)
+				obj = getattr(obj, component)
 			except AttributeError:
 				raise not_found_error('/'.join(components[:i+1]))
 		return obj
@@ -128,12 +148,12 @@ class RPCHandler(RequestHandler):
 		logging.debug(f"Calling {obj.__name__}(*[{args}], {{**{kwargs}}})")
 		# TODO check signature here
 		try:
-			obj(*args, **kwargs)
+			return obj(*args, **kwargs)
 		except Exception:
 			raise call_error(endpoint, sys.exc_info())
 
 	def set_default_headers(self):
-		self.set_header('Server', f"PyRPC/{VERSION}")
+		self.set_header('Server', SERVER_AGENT)
 
 	def write_error(self, status_code: int, **kwargs):
 

@@ -1,32 +1,20 @@
 
 from io import BytesIO, StringIO
 import json
-from typing import Sequence, Mapping, Set, Iterator, Union
-from typing import Dict, Tuple, Any
+from typing import Sequence, Mapping, Set, Union
+from typing import Dict, Any
 import numpy as np
 import base64
+
+from .util import encode_version, decode_version, map_values
 
 JsonType = Union[Sequence, Mapping, bytes, str, int, float]
 
 _missing = object()
 
 
-VERSION = (0, 1)
-
-
-def encode_version(v: Tuple) -> str:
-	"""Encode a version tuple as a string."""
-	return ".".join(map(str, v))
-
-
-def decode_version(v: str) -> Tuple:
-	"""Decode a version string as a tuple of ints."""
-	return tuple(map(int, v.split('.')))
-
-
-def map_values(fn, d: Mapping) -> Iterator:
-	"""Map `fn` over the values of `d`"""
-	return ((k, fn(v)) for (k, v) in d.items())
+MARSHAL_VERSION = (0, 1)
+MARSHAL_VERSION_STR = encode_version(MARSHAL_VERSION)
 
 
 def wrapped(ty: str, data: Any, **kwargs) -> Dict:
@@ -80,6 +68,7 @@ def marshal_obj(obj: Any) -> JsonType:
 	    - complex
 	    - str
 	    - bytes
+	    - NoneType
 
 	The following composite types are supported:
 	    - list (and types with a `__iter__()` method)
@@ -92,7 +81,7 @@ def marshal_obj(obj: Any) -> JsonType:
 	"""
 
 	# scalar types
-	if isinstance(obj, (float, int, str)):
+	if isinstance(obj, (float, int, str, type(None))):
 		# these types are natively supported by JSON
 		return obj
 	if isinstance(obj, complex):
@@ -163,7 +152,7 @@ def unmarshal_obj(obj: JsonType) -> Any:
 	Unmarshal an object. This function usually shouldn't
 	be called directly.
 	"""
-	if isinstance(obj, (int, float, str)):
+	if isinstance(obj, (int, float, str, type(None))):
 		return obj
 	if isinstance(obj, Sequence):
 		return list(map(lambda v: unmarshal_obj(v), obj))
@@ -189,6 +178,7 @@ def marshal(obj: Any) -> JsonType:
 	    - complex
 	    - str
 	    - bytes
+	    - NoneType
 
 	The following collection types are supported:
 	    - list (and types with a `__iter__()` method)
@@ -200,7 +190,7 @@ def marshal(obj: Any) -> JsonType:
 	This function is recursive, so collections are marshalled by first marshalling their members.
 	"""
 	return {
-		'v': encode_version(VERSION),
+		'v': MARSHAL_VERSION_STR,
 		'data': marshal_obj(obj),
 	}
 
@@ -218,7 +208,7 @@ def unmarshal(obj: Mapping) -> Any:
 		data = obj['data']
 	except (KeyError, ValueError):
 		raise ValueError("Could not decode protocol version info.")
-	if not version == VERSION:
+	if not version == MARSHAL_VERSION:
 		raise ValueError(f"Unsupported protocol version '{obj['v']}'.")
 	return unmarshal_obj(data)
 
