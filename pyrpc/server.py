@@ -167,15 +167,6 @@ class RPCHandler(RequestHandler):
 
 		self.finish()
 
-	# def write(self, chunk: Union[str, bytes, dict]) -> None:
-	# 	if self._finished:
-	# 		raise RuntimeError("write after finish()")
-	# 	if isinstance(chunk, dict):
-	# 		chunk = escape.json_encode(chunk)
-	# 		self.set_header("Content-Type", "application/json; charset=UTF-8")
-	# 	chunk = escape.utf8(chunk)
-	# 	self._write_buffer.append(chunk)
-
 
 class TEMScript:
 	constant_value = 5
