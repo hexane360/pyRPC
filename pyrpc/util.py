@@ -8,7 +8,7 @@ def encode_version(v: Tuple) -> str:
 
 def decode_version(v: str) -> Tuple:
 	"""Decode a version string as a tuple of ints."""
-	return tuple(map(int, v.split('.')))
+	return tuple(map(int, v.strip('.').split('.')))
 
 
 def map_values(fn, d: Mapping) -> Iterator:
