@@ -77,6 +77,18 @@ def test_version_marshal():
 	}
 
 
+def test_marshal_ref():
+	class TestType():
+		pass
+
+	def make_ref(obj):
+		return '/ref_url'
+
+	assert marshal_obj(TestType(), make_ref) == {
+		'type': 'ref', 'url': '/ref_url', 'class': 'TestType'
+	}
+
+
 def test_version_unmarshal():
 
 	with pytest.raises(TypeError, match=re.escape("Expected a dict, got '<class 'int'>' instead.")):

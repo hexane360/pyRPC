@@ -6,6 +6,7 @@ from typing import Dict
 
 import tornado.ioloop
 import tornado.netutil
+from tornado.httpserver import HTTPServer
 import pytest
 
 from .marshal import unmarshal_from_str
@@ -43,7 +44,21 @@ def test_rpc_get(rpc_server):
 
 	assert resp.status == 200
 	assert resp.headers['Server'] == SERVER_AGENT
+	assert resp.headers['Content-Type'] == 'application/json; charset=UTF-8'
 	assert unmarshal_from_str(resp.body) == 5
+
+
+def test_bad_content_type(rpc_server):
+	(port, obj) = rpc_server
+
+	resp = http_request(port, 'POST', '/fun',
+	                    headers={'Content-Type': 'text/plain'})
+
+	assert resp.status == 415
+	assert resp.body.decode('utf-8') == (
+		"HTTP 415: Unsupported Media Type:\n"
+		"Expected application/json"
+	)
 
 
 class TestObj:
@@ -62,7 +77,8 @@ class TestObj:
 def rpc_server(scope="session"):
 
 	obj = TestObj()
-	server = RPCServer(obj)
+	app = RPCServer(obj)
+	server = HTTPServer(app)
 
 	# listen on an empty port
 	sockets = tornado.netutil.bind_sockets(None, 'localhost')
@@ -75,7 +91,7 @@ def rpc_server(scope="session"):
 		# set event loop
 		asyncio.set_event_loop(io_loop)
 		# assign sockets to the server
-		server.server.add_sockets(sockets)
+		server.add_sockets(sockets)
 		# and start event loop
 		tornado.ioloop.IOLoop.current().start()
 

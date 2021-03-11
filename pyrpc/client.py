@@ -1,8 +1,8 @@
 
 import logging
 from urllib.parse import urlparse, urljoin
+from functools import partial
 from typing import Optional, Union, Any
-import json
 
 from tornado.httputil import HTTPHeaders, split_host_and_port
 from tornado.httpclient import HTTPClient, HTTPRequest, HTTPResponse, HTTPError
@@ -48,7 +48,7 @@ class RPCConnection:
 
 		headers = self.headers()
 		if body is not None:
-			headers.add('Content-Type', 'application/x-json')
+			headers.add('Content-Type', 'application/json')
 
 		return HTTPRequest(
 			url,
@@ -76,7 +76,7 @@ class RPCConnection:
 				# raise error now if we couldn't decode body
 				raise UnicodeDecodeError("Couldn't decode response body.")
 			print(f"raw body: {body}")
-			return unmarshal_from_str(body)
+			return unmarshal_from_str(body, partial(make_node, self))
 		if resp.code == 404:
 			raise AttributeError(body)
 		if resp.code == 400:
@@ -100,7 +100,7 @@ class RPCConnection:
 		if resp.code == 200:
 			if body is None:
 				raise UnicodeDecodeError("Couldn't decode response body.")
-			return unmarshal_from_str(body)
+			return unmarshal_from_str(body, partial(make_node, self))
 		if resp.code == 404:
 			raise AttributeError(body)
 		if resp.code == 400:
@@ -111,17 +111,19 @@ class RPCConnection:
 
 class RPCNode:
 	def __init__(self, connection: RPCConnection, endpoint: str = "/"):
-		self.connection: RPCConnection = connection
-		self.endpoint = endpoint
+		# avoid calling our modified __setattr__
+		object.__setattr__(self, 'connection', connection)
+		object.__setattr__(self, 'endpoint', endpoint)
 
 	def __getattr__(self, name):
-		return RPCNode(self.connection, urljoin(self.endpoint, name))
+		return self.connection.get(urljoin(self.endpoint, name))
+		#return RPCNode(self.connection, urljoin(self.endpoint, name))
 
 	def __setattr__(self, name, value):
 		self.connection.put(urljoin(self.endpoint, name), value)
 
 	def call(self, *args, **kwargs):
-		return self.connection.call(self.endpoint, *args, **kwargs)
+		return self.connection.post(self.endpoint, *args, **kwargs)
 
 	def __call__(self, *args, **kwargs):
 		return self.call(*args, **kwargs)
@@ -134,3 +136,14 @@ class RPCNode:
 
 	def signature(self):
 		return self.connection.get(urljoin(self.endpoint, "__sig__"))
+
+	#def __str__(self):
+	#	return self.connection.post(urljoin(self.endpoint, '__str__'))
+
+	def __repr__(self):
+		return self.connection.post(urljoin(self.endpoint, '__str__'))
+
+
+def make_node(connection: RPCConnection, url: str,
+              cls: Optional[str] = None) -> RPCNode:
+	return RPCNode(connection, url)

@@ -5,6 +5,7 @@ from typing import Sequence, Mapping, Set, Union
 from typing import Dict, Any
 import numpy as np
 import base64
+from functools import partial
 
 from .util import encode_version, decode_version, map_values
 
@@ -46,7 +47,7 @@ def marshal_ndarray(arr: np.ndarray) -> Dict:
 	return wrapped('ndarray', data, shape=arr.shape, size=arr.size)
 
 
-def unmarshal_ndarray(obj: Dict) -> np.ndarray:
+def unmarshal_ndarray(obj: Dict, node_factory=None) -> np.ndarray:
 	"""
 	Unmarshal a numpy ndarray.
 	"""
@@ -57,7 +58,7 @@ def unmarshal_ndarray(obj: Dict) -> np.ndarray:
 	return np.lib.format.read_array(io)
 
 
-def marshal_obj(obj: Any) -> JsonType:
+def marshal_obj(obj: Any, ref_factory=None) -> JsonType:
 	"""
 	Marshal an object. This function usually shouldn't
 	be called directly (use `marshal()` instead).
@@ -101,45 +102,67 @@ def marshal_obj(obj: Any) -> JsonType:
 
 	# composite types
 
+	recur = partial(marshal_obj, ref_factory=ref_factory)
+
 	# Also supports types with a `to_dict` method
 	if isinstance(obj, Mapping) or hasattr(obj, 'to_dict'):
 		if hasattr(obj, 'to_dict'):
 			obj = obj.to_dict()
 		# dicts are wrapped so they're not mistaken for other values
-		inner = dict(map_values(marshal_obj, obj))
+		inner = dict(map_values(recur, obj))
 		return wrapped('dict', inner)
 
 	if isinstance(obj, Set) or hasattr(obj, 'to_set'):
 		if hasattr(obj, 'to_set'):
 			obj = obj.to_set()
-		inner = list(map(marshal_obj, obj))
+		inner = list(map(recur, obj))
 		return wrapped('set', inner)
 
 	# __iter__ is marshalled as list as well
 	if isinstance(obj, Sequence) or hasattr(obj, '__iter__'):
 		# marshal inside values
-		inner = list(map(marshal_obj, obj))
+
+		inner = list(map(recur, obj))
 		if isinstance(obj, tuple):
 			# tuples should be unmarshaled as tuples
 			return wrapped('tuple', inner)
 		return inner
 
-	raise TypeError(f"Unsupported type {type(obj)}")
+	# marshal reference to object
+	if ref_factory is None:
+		raise TypeError(f"Unsupported type {type(obj)}")
+
+	return {
+		'type': 'ref',
+		'url': ref_factory(obj),
+		'class': type(obj).__name__,
+	}
+
+
+def unmarshal_ref(obj, node_factory=None):
+	if node_factory is None:
+		raise TypeError(f"Unsupported type {obj['class']}")
+	return node_factory(url=obj['url'], cls=obj['class'])
+
+
+def partial_unmarshal(node_factory=None):
+	return partial(unmarshal_obj, node_factory=node_factory)
 
 
 UNMARSHAL_MAP = {
 	# just unmarshal inner dictionary
-	'dict': lambda obj: dict(map_values(unmarshal_obj, obj['data'])),
+	'dict': lambda obj, node_f: dict(map_values(partial_unmarshal(node_f), obj['data'])),
 	# re-interpret a list as a tuple
-	'tuple': lambda obj: tuple(map(unmarshal_obj, obj['data'])),
+	'tuple': lambda obj, node_f: tuple(map(partial_unmarshal(node_f), obj['data'])),
 	# re-interpret a list as a set
-	'set': lambda obj: set(map(unmarshal_obj, obj['data'])),
+	'set': lambda obj, node_f: set(map(partial_unmarshal(node_f), obj['data'])),
 	# ndarray unmarshal is done specially
 	'ndarray': unmarshal_ndarray,
 	# unmarshal complex from [real, imag]
-	'complex': lambda obj: complex(*obj['data']),
+	'complex': lambda obj, _: complex(*obj['data']),
 	# bytes are base64 encoded
-	'bytes': lambda obj: base64.b64decode(obj['data'].encode('ascii'))
+	'bytes': lambda obj, _: base64.b64decode(obj['data'].encode('ascii')),
+	'ref': unmarshal_ref,
 }
 """
 Map which takes a type annotation and dispatches to a function which
@@ -147,7 +170,7 @@ unmarshals objects of that type.
 """
 
 
-def unmarshal_obj(obj: JsonType) -> Any:
+def unmarshal_obj(obj: JsonType, node_factory=None) -> Any:
 	"""
 	Unmarshal an object. This function usually shouldn't
 	be called directly.
@@ -155,7 +178,7 @@ def unmarshal_obj(obj: JsonType) -> Any:
 	if isinstance(obj, (int, float, str, type(None))):
 		return obj
 	if isinstance(obj, Sequence):
-		return list(map(lambda v: unmarshal_obj(v), obj))
+		return list(map(partial_unmarshal(node_factory), obj))
 
 	if not isinstance(obj, Mapping):
 		raise TypeError(f"Unknown json type {type(obj)}")
@@ -165,10 +188,10 @@ def unmarshal_obj(obj: JsonType) -> Any:
 		raise ValueError("Unknown type annotation {ty}")
 
 	# dispatch based on object type
-	return UNMARSHAL_MAP[ty](obj)
+	return UNMARSHAL_MAP[ty](obj, node_factory)
 
 
-def marshal(obj: Any) -> JsonType:
+def marshal(obj: Any, ref_factory=None) -> JsonType:
 	"""
 	Marshal an object, including version information.
 
@@ -191,11 +214,11 @@ def marshal(obj: Any) -> JsonType:
 	"""
 	return {
 		'v': MARSHAL_VERSION_STR,
-		'data': marshal_obj(obj),
+		'data': marshal_obj(obj, ref_factory),
 	}
 
 
-def unmarshal(obj: Mapping) -> Any:
+def unmarshal(obj: Mapping, node_factory=None) -> Any:
 	"""
 	Unmarshal an object, including version information. To unmarshal
 	form a JSON string, use `unmarshal_from_string` instead.
@@ -210,26 +233,26 @@ def unmarshal(obj: Mapping) -> Any:
 		raise ValueError("Could not decode protocol version info.")
 	if not version == MARSHAL_VERSION:
 		raise ValueError(f"Unsupported protocol version '{obj['v']}'.")
-	return unmarshal_obj(data)
+	return unmarshal_obj(data, node_factory)
 
 
-def marshal_io(obj: Any, io):
+def marshal_io(obj: Any, io, ref_factory=None):
 	"""Marshal an object as JSON, and write it to a file object `io`."""
-	json.dump(marshal(obj), io, ensure_ascii=False)
+	json.dump(marshal(obj, ref_factory), io, ensure_ascii=False)
 
 
-def marshal_to_str(obj: Any) -> str:
+def marshal_to_str(obj: Any, ref_factory=None) -> str:
 	"""Marshal an object as JSON, returning the serialized text."""
 	output = StringIO()
-	marshal_io(obj, output)
+	marshal_io(obj, output, ref_factory)
 	return output.getvalue()
 
 
-def unmarshal_io(io) -> Any:
+def unmarshal_io(io, node_factory=None) -> Any:
 	"""Unmarshal an object from an IO object `io`"""
-	return unmarshal(json.load(io))
+	return unmarshal(json.load(io), node_factory)
 
 
-def unmarshal_from_str(s: str) -> Any:
+def unmarshal_from_str(s: str, node_factory=None) -> Any:
 	"""Unmarshal a JSON-encoded object from `bytes`"""
-	return unmarshal(json.loads(s))
+	return unmarshal(json.loads(s), node_factory)

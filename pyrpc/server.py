@@ -4,10 +4,12 @@ Module containing the pyrpc `Server`.
 
 import inspect
 import logging
+#from os import urandom
 import sys
 import traceback
 import json
 from io import BytesIO
+import weakref
 from typing import List, Sequence, Optional, Awaitable, Union
 
 #from tornado import escape, gen
@@ -65,15 +67,24 @@ def signature_error() -> RPCError:
 	return RPCError(400)
 
 
-class RPCServer:
-	def __init__(self, root, **kwargs):
-		self.app = Application([
-			(r".*", RPCHandler, dict(root=root))
-		])
-		self.server = HTTPServer(self.app, **kwargs)
+class RPCServer(Application):
+	def __init__(self, root):
+		self.root = root
+		self.refs = {}
 
-	def listen(self, port: int, address: str = ""):
-		self.server.listen(port, address)
+		super().__init__([
+			#(r"/id/.*", RefHandler, dict(root=root))
+			(r".*", RPCHandler)
+		])
+		#self.server = HTTPServer(self.app, **kwargs)
+
+	#def listen(self, port: int, address: str = ""):
+	#	self.server.listen(port, address)
+
+	def make_ref(self, obj):
+		obj_id = f"{id(obj):x}"
+		self.refs[obj_id] = weakref.ref(obj)
+		return f"/id/{obj_id}/"
 
 
 def encode_value(obj) -> bytes:
@@ -86,11 +97,12 @@ class RPCHandler(RequestHandler):
 	Class which handles an RPC request.
 	"""
 
-	def initialize(self, root):
-		self.root = root
+	def initialize(self):
+		pass
 
 	def write_obj(self, obj):
-		s = marshal_to_str(obj)
+		s = marshal_to_str(obj, self.application.make_ref)
+		self.add_header('Content-Type', 'application/json; charset=UTF-8')
 		self.write(s.encode('utf-8'))
 
 	def get(self):
@@ -101,8 +113,10 @@ class RPCHandler(RequestHandler):
 	def post(self):
 		logging.debug(f"POST {self.request.path}\nbody:\n{self.request.body}")
 
-		if self.request.headers.get('Content-Type', 'application/x-json') != 'application/x-json':
-			raise RPCError(415, "Expected application/x-json")
+		content_type = self.request.headers.get('Content-Type', 'application/json')
+		content_type = content_type.split(';')[0].strip()
+		if content_type not in ['application/json', 'application/x-json']:
+			raise RPCError(415, "Expected application/json")
 
 		try:
 			body = unmarshal_from_str(self.request.body.decode('utf-8'))
@@ -123,12 +137,26 @@ class RPCHandler(RequestHandler):
 		return self.finish()
 
 	def get_endpoint(self, endpoint: str):
-		components = endpoint.lstrip('/').split('/')
+		components = endpoint.strip('/').split('/')
 
 		if components == ['']:
 			components = []
 
-		obj = self.root
+		if len(components) > 0 and components[0] == 'id':
+			if len(components) == 1:
+				raise not_found_error("/id")
+			logging.debug(f"Looking up reference '{components[1]}'")
+			logging.debug(f"refs: {self.application.refs}")
+			id = components[1]
+			if id.lower() not in self.application.refs:
+				raise not_found_error(f"/id/{id}")
+			obj = self.application.refs[id.lower()]()
+			if obj is None:
+				raise not_found_error(f"/id/{id}")  # object has been deleted
+			components = components[2:]  # todo this breaks error messages
+		else:
+			obj = self.application.root
+
 		for (i, component) in enumerate(components):
 			if component == '__sig__':  # return function signature instead
 				try:
